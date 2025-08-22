@@ -11,8 +11,9 @@
     "resolveJsonModule": true,
     "allowJs": true,
     "esModuleInterop": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "outDir": "dist"
   },
-  "include": ["src"],
+  "include": ["src/*"],
   "exclude": ["node_modules", "dist"]
 }

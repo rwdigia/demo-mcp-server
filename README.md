@@ -1,6 +1,6 @@
-![Demo of app](docs/intro.gif)
+# Digia Hammertime MCP Server
 
-Demo MCP Server is a light weight [Express](https://expressjs.com/) server using the [Model Context Protocol SDK](https://modelcontextprotocol.io/docs/getting-started/intro).
+Digia Hammertime MCP Server is a light weight [Express](https://expressjs.com/) server using the [Model Context Protocol SDK](https://modelcontextprotocol.io/docs/getting-started/intro).
 
 ## Running
 
