@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -5,6 +6,15 @@ import { z } from "zod";
 import cors from "cors";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "node:crypto";
+import { createRemoteJWKSet, jwtVerify, JWTPayload } from "jose";
+import { auth } from "express-oauth2-jwt-bearer";
+
+const JWKS = createRemoteJWKSet(
+  new URL(
+    `${process.env.ENTRA_ISSUER_BASE!}/${process.env
+      .ENTRA_TENANT!}/discovery/v2.0/keys`
+  )
+);
 
 const app = express();
 app.use(express.json());
@@ -17,9 +27,95 @@ app.use(
   })
 );
 
+app.get("/.well-known/oauth-protected-resource", (_req, res) => {
+  res.json({
+    resource: process.env.AUDIENCE!,
+    authorization_servers: [
+      `${process.env.ENTRA_ISSUER_BASE!}/${process.env.ENTRA_TENANT!}/v2.0`,
+    ],
+    token_types_supported: ["Bearer"],
+  });
+});
+
+function challenge(res: express.Response, detail?: string) {
+  const header = [
+    `Bearer resource_metadata="${process.env
+      .PRM_BASE_URL!}/.well-known/oauth-protected-resource"`,
+    detail
+      ? `error="invalid_token", error_description="${detail.replace(
+          /"/g,
+          "'"
+        )}"`
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  res.setHeader("WWW-Authenticate", header);
+  res.status(401).end();
+}
+
+async function validate(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  const auth = req.header("authorization");
+  if (!auth?.startsWith("Bearer ")) {
+    console.log("Authorization header missing or invalid");
+    return challenge(res, "missing token");
+  }
+
+  const token = auth.slice("Bearer ".length).trim();
+
+  try {
+    const { payload, protectedHeader } = await jwtVerify(token, JWKS, {
+      audience: process.env.AUDIENCE!,
+    });
+
+    const parsed = z
+      .object({
+        iss: z.string().url(),
+        tid: z.string().uuid().optional(),
+        aud: z.union([z.string(), z.array(z.string())]),
+        exp: z.number(),
+        nbf: z.number().optional(),
+        iat: z.number().optional(),
+        aio: z.string().optional(),
+        azp: z.string().optional(),
+        scp: z.string().optional(),
+        roles: z.array(z.string()).optional(),
+      })
+      .parse(payload as JWTPayload);
+
+    if (
+      !parsed.iss.startsWith(`${process.env.ENTRA_ISSUER_BASE!}/`) ||
+      !parsed.iss.endsWith("/v2.0")
+    ) {
+      return challenge(res, "invalid issuer");
+    }
+
+    const auds = Array.isArray(parsed.aud) ? parsed.aud : [parsed.aud];
+    if (!auds.includes(process.env.AUDIENCE!)) {
+      return challenge(res, "invalid audience");
+    }
+
+    const scopes = (parsed.scp ?? "").split(" ").filter(Boolean);
+    if (!scopes.includes("mcp.access") && !(parsed.roles ?? []).length) {
+      return challenge(res, "insufficient scope");
+    }
+
+    (req as any).token = payload;
+    (req as any).tokenHeader = protectedHeader;
+
+    next();
+  } catch (e: any) {
+    return challenge(res, e?.message ?? "token verification failed");
+  }
+}
+
 const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
 
-app.post("/mcp", async (req, res) => {
+async function server(req: any, res: express.Response) {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   let transport: StreamableHTTPServerTransport;
 
@@ -40,12 +136,43 @@ app.post("/mcp", async (req, res) => {
     };
 
     const server = new McpServer({
-      name: "demo-mcp-server",
-      version: "0.1.0",
+      name: "digia-hammertime-mcpserver",
+      version: "0.0.1",
     });
 
     server.registerTool(
-      "add",
+      "roll-dice",
+      {
+        title: "Roll Dice",
+        description: "Roll a dice",
+        inputSchema: { sides: z.number().min(2).default(6) },
+      },
+      async ({ sides }) => {
+        const result = Math.floor(Math.random() * sides) + 1;
+        return {
+          content: [{ type: "text", text: result.toString() }],
+        };
+      }
+    );
+
+    server.registerTool(
+      "favourite-colour",
+      {
+        title: "Favourite Colour",
+        description: "Get the AI's favourite colour",
+        inputSchema: {
+          colour: z.enum(["red", "green", "blue", "yellow", "purple"]),
+        },
+      },
+      async ({ colour }) => {
+        return {
+          content: [{ type: "text", text: colour }],
+        };
+      }
+    );
+
+    server.registerTool(
+      "addition",
       {
         title: "Addition Tool",
         description: "Add two numbers",
@@ -70,7 +197,7 @@ app.post("/mcp", async (req, res) => {
         content: [
           {
             type: "text",
-            text: String(weightKg / (heightM * heightM)),
+            text: String(Math.floor(weightKg / (heightM * heightM))),
           },
         ],
       })
@@ -98,17 +225,13 @@ app.post("/mcp", async (req, res) => {
       },
       id: null,
     });
-    console.log("No valid session ID provided");
     return;
   }
 
   await transport.handleRequest(req, res, req.body);
-});
+}
 
-const handleSessionRequest = async (
-  req: express.Request,
-  res: express.Response
-) => {
+const handleSessionRequest = async (req: any, res: express.Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
   if (!sessionId || !transports[sessionId]) {
@@ -120,8 +243,19 @@ const handleSessionRequest = async (
   await transport.handleRequest(req, res);
 };
 
+app.post("/mcp", validate, server);
+
 app.get("/mcp", handleSessionRequest);
 
 app.delete("/mcp", handleSessionRequest);
 
-app.listen(4000);
+app.get("/healthz", (_req, res) => res.json({ ok: true }));
+
+app.use(
+  auth({
+    issuerBaseURL: `https://login.microsoftonline.com/${process.env.ENTRA_TENANT}/v2.0`,
+    audience: process.env.AUDIENCE!,
+  })
+);
+
+app.listen(Number(process.env.PORT ?? 4000));
