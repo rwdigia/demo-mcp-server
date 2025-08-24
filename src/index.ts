@@ -1,13 +1,64 @@
 import "dotenv/config";
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp";
+import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
+import { z, ZodTypeAny, ZodRawShape } from "zod";
 import cors from "cors";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from "jose";
 import { auth } from "express-oauth2-jwt-bearer";
+
+type JSONSchema = {
+  type: string;
+  properties?: Record<string, JSONSchema>;
+  required?: string[];
+  enum?: string[];
+  minimum?: number;
+  maximum?: number;
+  items?: JSONSchema;
+};
+
+function jsonSchemaToZod(schema: JSONSchema): ZodTypeAny {
+  switch (schema.type) {
+    case "string":
+      return schema.enum
+        ? z.enum(schema.enum as [string, ...string[]])
+        : z.string();
+
+    case "number": {
+      let num = z.number();
+      if (schema.minimum !== undefined) num = num.min(schema.minimum);
+      if (schema.maximum !== undefined) num = num.max(schema.maximum);
+      return num;
+    }
+
+    case "boolean":
+      return z.boolean();
+
+    case "object": {
+      if (!schema.properties) return z.object({});
+      const shape: Record<string, ZodTypeAny> = {};
+
+      for (const [key, prop] of Object.entries(schema.properties)) {
+        let field = jsonSchemaToZod(prop);
+        if (!schema.required?.includes(key)) field = field.optional();
+        shape[key] = field;
+      }
+
+      return z.object(shape as unknown as ZodRawShape);
+    }
+
+    case "array":
+      if (!schema.items) return z.array(z.any());
+      return z.array(jsonSchemaToZod(schema.items));
+
+    default:
+      return z.any();
+  }
+}
 
 const JWKS = createRemoteJWKSet(
   new URL(
@@ -139,6 +190,67 @@ async function server(req: any, res: express.Response) {
       name: "digia-hammertime-mcpserver",
       version: "0.0.1",
     });
+
+    const githubClient = new McpClient({
+      name: "digia-hammertime-mcp-githubclient",
+      version: "0.0.1",
+    });
+
+    const githubTransport = new StreamableHTTPClientTransport(
+      new URL("https://api.githubcopilot.com/mcp"),
+      {
+        fetch: async (input, init = {}) => {
+          const headers = new Headers(init.headers);
+          headers.set(
+            "Authorization",
+            `Bearer ${process.env.GITHUB_ACCESS_TOKEN}`
+          );
+          const newInit = { ...init, headers };
+          return fetch(input, newInit);
+        },
+      }
+    );
+
+    await githubClient.connect(githubTransport);
+
+    const githubTools = await githubClient.listTools();
+
+    interface Tool {
+      name: string;
+      title: string;
+      description: string;
+      inputSchema: any;
+    }
+
+    for (const tool of Object.values(githubTools.tools) as Tool[]) {
+      console.log("GitHub Tool:", tool.inputSchema);
+      const zodSchema = jsonSchemaToZod(tool.inputSchema);
+      server.registerTool(
+        tool.name,
+        {
+          title: tool.title,
+          description: tool.description,
+          // @ts-expect-error TODO
+          inputSchema: zodSchema.shape,
+        },
+        async (args: { [x: string]: any }, _extra: any) => {
+          const result = await githubClient.callTool({
+            name: tool.name,
+            arguments: args,
+          });
+          return {
+            title: tool.title,
+            description: tool.description,
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result),
+              } as { [x: string]: unknown; type: "text"; text: string },
+            ],
+          };
+        }
+      );
+    }
 
     server.registerTool(
       "weather",
