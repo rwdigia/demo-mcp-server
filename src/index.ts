@@ -141,6 +141,45 @@ async function server(req: any, res: express.Response) {
     });
 
     server.registerTool(
+      "weather",
+      {
+        title: "Weather",
+        description: "Gets the current weather for a location",
+        inputSchema: {
+          lat: z.string(),
+          lon: z.string(),
+        },
+      },
+      async ({ lat, lon }) => {
+        try {
+          let headers = new Headers({
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "DigiaHammertimeMcpserver/0.0.1",
+          });
+          const response = await fetch(
+            `https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat}&lon=${lon}`,
+            { headers }
+          );
+          const data = await response.json();
+          const weather = data.properties.timeseries[0].data.instant.details;
+          return {
+            title: "☀️ Weather",
+            description: `Current weather in ${lat}, ${lon}`,
+            content: [{ type: "text", text: JSON.stringify(weather) }],
+          };
+        } catch (error) {
+          console.error("Error fetching weather data:", error);
+          return {
+            title: "☀️ Weather",
+            description: `Current weather in ${lat}, ${lon}`,
+            content: [{ type: "text", text: "Error fetching weather data" }],
+          };
+        }
+      }
+    );
+
+    server.registerTool(
       "roll-dice",
       {
         title: "Roll Dice",
