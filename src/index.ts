@@ -10,6 +10,12 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from "jose";
 import { auth } from "express-oauth2-jwt-bearer";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 type JSONSchema = {
   type: string;
@@ -112,7 +118,6 @@ async function validate(
 ) {
   const auth = req.header("authorization");
   if (!auth?.startsWith("Bearer ")) {
-    console.log("Authorization header missing or invalid");
     return challenge(res, "missing token");
   }
 
@@ -223,7 +228,6 @@ async function server(req: any, res: express.Response) {
     }
 
     for (const tool of Object.values(githubTools.tools) as Tool[]) {
-      console.log("GitHub Tool:", tool.inputSchema);
       const zodSchema = jsonSchemaToZod(tool.inputSchema);
       server.registerTool(
         tool.name,
@@ -251,6 +255,113 @@ async function server(req: any, res: express.Response) {
         }
       );
     }
+
+    server.registerTool(
+      "get-todos",
+      {
+        title: "Get todos",
+        description: "Fetches all todos",
+        inputSchema: {},
+        outputSchema: {
+          todos: z.array(
+            z.object({
+              id: z.number(),
+              title: z.string(),
+              description: z.string(),
+            })
+          ),
+        },
+      },
+      async () => {
+        const { data: todos, error } = await supabase.from("todos").select("*");
+        if (error) {
+          throw new Error(`Error fetching todos: ${error.message}`);
+        }
+        return {
+          content: [{ type: "text", text: JSON.stringify(todos) }],
+          structuredContent: {
+            todos,
+          },
+        };
+      }
+    );
+
+    server.registerTool(
+      "get-todo",
+      {
+        title: "Get todo",
+        description: "Fetches a todo by ID",
+        inputSchema: { id: z.number() },
+        outputSchema: {
+          id: z.number(),
+          title: z.string(),
+          description: z.string(),
+        },
+      },
+      async ({ id }) => {
+        const { data: todo, error } = await supabase
+          .from("todos")
+          .select("*")
+          .eq("id", id)
+          .single();
+        if (error || !todo) {
+          console.log(
+            "Error fetching todo:",
+            error?.message ?? "Todo not found"
+          );
+          throw new Error(
+            `Error fetching todo: ${error?.message ?? "Todo not found"}`
+          );
+        }
+        return {
+          content: [{ type: "text", text: JSON.stringify(todo) }],
+          structuredContent: {
+            id: todo.id,
+            title: todo.title,
+            description: todo.description,
+          },
+        };
+      }
+    );
+
+    server.registerTool(
+      "add-todo",
+      {
+        title: "Add todo",
+        description: "Creates a new todo",
+        inputSchema: {
+          title: z.string(),
+          description: z.string(),
+        },
+        outputSchema: {
+          id: z.number(),
+          title: z.string(),
+          description: z.string(),
+        },
+      },
+      async ({ title, description }) => {
+        const { data: todo, error } = await supabase
+          .from("todos")
+          .insert({
+            title,
+            description,
+          })
+          .select()
+          .single();
+        if (error) {
+          console.log("Error adding task:", error.message);
+          throw new Error(`Error adding task: ${error.message}`);
+        }
+        return {
+          content: [{ type: "text", text: JSON.stringify(todo) }],
+          structuredContent: {
+            id: todo.id,
+            title: todo.title,
+            description: todo.description,
+          },
+        };
+      }
+    );
 
     server.registerTool(
       "weather",
@@ -281,7 +392,6 @@ async function server(req: any, res: express.Response) {
             content: [{ type: "text", text: JSON.stringify(weather) }],
           };
         } catch (error) {
-          console.error("Error fetching weather data:", error);
           return {
             title: "☀️ Weather",
             description: `Current weather in ${lat}, ${lon}`,
