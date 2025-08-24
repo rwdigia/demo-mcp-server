@@ -144,56 +144,65 @@ async function server(req: any, res: express.Response) {
       "roll-dice",
       {
         title: "Roll Dice",
-        description: "Roll a dice",
-        inputSchema: { sides: z.number().min(2).default(6) },
+        description: "Rolls a dice and gives a random result from 1 to 6",
       },
-      async ({ sides }) => {
-        const result = Math.floor(Math.random() * sides) + 1;
+      async () => {
+        const result = Math.floor(Math.random() * 6) + 1;
         return {
+          title: "🎲 Roll Dice",
+          description: "Rolls a dice and gives a random result from 1 to 6",
           content: [{ type: "text", text: result.toString() }],
         };
       }
     );
 
     server.registerTool(
-      "favourite-colour",
+      "pick-color",
       {
-        title: "Favourite Colour",
-        description: "Get the AI's favourite colour",
+        title: "Pick Color",
+        description: "Lets me share my favorite color from a given choice",
         inputSchema: {
-          colour: z.enum(["red", "green", "blue", "yellow", "purple"]),
+          color: z.enum(["red", "green", "blue", "yellow", "purple"]),
         },
       },
-      async ({ colour }) => {
+      async ({ color }) => {
         return {
-          content: [{ type: "text", text: colour }],
+          title: "🎨 Pick Color",
+          description: "Lets me share my favorite color from a given choice",
+          content: [{ type: "text", text: color }],
         };
       }
     );
 
     server.registerTool(
-      "addition",
+      "add",
       {
-        title: "Addition Tool",
-        description: "Add two numbers",
+        title: "Addition",
+        description: "Adds two numbers together",
         inputSchema: { a: z.number(), b: z.number() },
       },
       async ({ a, b }) => ({
+        title: "➕ Addition",
+        description: "Adds two numbers together",
         content: [{ type: "text", text: String(a + b) }],
       })
     );
 
     server.registerTool(
-      "calculate-bmi",
+      "bmi",
       {
         title: "BMI Calculator",
-        description: "Calculate Body Mass Index",
+        description:
+          "Calculates Body Mass Index from weight (kg) and height (m)",
         inputSchema: {
           weightKg: z.number(),
           heightM: z.number(),
         },
       },
       async ({ weightKg, heightM }) => ({
+        title: "⚖️ BMI",
+        description:
+          "Calculates Body Mass Index from weight (kg) and height (m)",
         content: [
           {
             type: "text",
@@ -206,12 +215,19 @@ async function server(req: any, res: express.Response) {
     server.registerTool(
       "echo",
       {
-        title: "Echo Tool",
-        description: "Echoes back the provided message",
+        title: "Echo back",
+        description: "Repeats back the message you provide",
         inputSchema: { message: z.string() },
       },
       async ({ message }) => ({
-        content: [{ type: "text", text: `Tool echo: ${message}` }],
+        title: "🗣️ Echo",
+        description: "Repeats back the message you provide",
+        content: [
+          {
+            type: "text",
+            text: `Tool echo: ${message}`,
+          },
+        ],
       })
     );
 
