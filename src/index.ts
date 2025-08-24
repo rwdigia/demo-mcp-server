@@ -232,20 +232,22 @@ async function server(req: any, res: express.Response) {
       {
         title: "BMI Calculator",
         description:
-          "Calculates Body Mass Index from weight (kg) and height (m)",
+          "Calculates Body Mass Index from weight (kg) and height (cm)",
         inputSchema: {
           weightKg: z.number(),
-          heightM: z.number(),
+          heightCm: z.number(),
         },
       },
-      async ({ weightKg, heightM }) => ({
+      async ({ weightKg, heightCm }) => ({
         title: "⚖️ BMI",
         description:
-          "Calculates Body Mass Index from weight (kg) and height (m)",
+          "Calculates Body Mass Index from weight (kg) and height (cm)",
         content: [
           {
             type: "text",
-            text: String(Math.floor(weightKg / (heightM * heightM))),
+            text: String(
+              Math.floor(weightKg / ((heightCm / 100) * (heightCm / 100)))
+            ),
           },
         ],
       })
